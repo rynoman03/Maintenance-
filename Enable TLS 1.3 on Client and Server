@@ -1,0 +1,40 @@
+############################
+# Created Date: 08/08/2024 #
+# Created By: Ryan Cashier #
+# Version 1.0              #
+############################
+
+# Run this script as Administrator
+
+# Enable TLS 1.3 on the client side
+$clientTLSRegistryPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Internet Settings\WinHttp"
+New-ItemProperty -Path $clientTLSRegistryPath -Name "DefaultSecureProtocols" -Value 0x800 | Out-Null
+
+# Enable TLS 1.3 on the server side
+$serverTLSRegistryPath = "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.3\Server"
+If (-Not (Test-Path $serverTLSRegistryPath)) {
+    New-Item -Path $serverTLSRegistryPath -Force | Out-Null
+}
+Set-ItemProperty -Path $serverTLSRegistryPath -Name "Enabled" -Value 1
+Set-ItemProperty -Path $serverTLSRegistryPath -Name "DisabledByDefault" -Value 0
+
+# Enable TLS 1.3 on the client side (WinHTTP Settings)
+$clientTLSRegistryPathHTTP = "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.3\Client"
+If (-Not (Test-Path $clientTLSRegistryPathHTTP)) {
+    New-Item -Path $clientTLSRegistryPathHTTP -Force | Out-Null
+}
+Set-ItemProperty -Path $clientTLSRegistryPathHTTP -Name "Enabled" -Value 1
+Set-ItemProperty -Path $clientTLSRegistryPathHTTP -Name "DisabledByDefault" -Value 0
+
+# Update the System Default TLS version for .NET applications
+$dotNetRegistryPath = "HKLM:\SOFTWARE\Microsoft\.NETFramework\v4.0.30319"
+If (Test-Path $dotNetRegistryPath) {
+    New-ItemProperty -Path $dotNetRegistryPath -Name "SchUseStrongCrypto" -Value 1 -PropertyType "DWord" -Force | Out-Null
+}
+
+$dotNetRegistryPath64 = "HKLM:\SOFTWARE\WOW6432Node\Microsoft\.NETFramework\v4.0.30319"
+If (Test-Path $dotNetRegistryPath64) {
+    New-ItemProperty -Path $dotNetRegistryPath64 -Name "SchUseStrongCrypto" -Value 1 -PropertyType "DWord" -Force | Out-Null
+}
+
+Write-Host "TLS 1.3 has been enabled on both the client and server sides. A restart may be required for the changes to take effect."
