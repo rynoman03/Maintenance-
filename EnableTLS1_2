@@ -1,0 +1,39 @@
+############################
+# Created Date: 08/08/2024 #
+# Created By: Ryan Cashier #
+# Version 1.0              #
+############################
+
+# Enable TLS 1.2 on the client
+$clientKey = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Internet Settings\WinHttp'
+$clientSubKey = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Internet Settings\WinHttp\WinHttp2'
+
+# Set the TLS 1.2 flag in the registry
+Set-ItemProperty -Path $clientKey -Name 'DefaultSecureProtocols' -Value 0x00000800
+Set-ItemProperty -Path $clientSubKey -Name 'DefaultSecureProtocols' -Value 0x00000800
+
+# Enable TLS 1.2 on the server
+$serverKey = 'HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.2\Server'
+
+# Create the key if it does not exist
+If (-Not (Test-Path $serverKey)) {
+    New-Item -Path $serverKey -Force
+}
+
+# Set the Enabled and DisabledByDefault flags in the registry
+Set-ItemProperty -Path $serverKey -Name 'Enabled' -Value 1 -Type DWord
+Set-ItemProperty -Path $serverKey -Name 'DisabledByDefault' -Value 0 -Type DWord
+
+# Enable TLS 1.2 on the client side
+$clientTlsKey = 'HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.2\Client'
+
+# Create the key if it does not exist
+If (-Not (Test-Path $clientTlsKey)) {
+    New-Item -Path $clientTlsKey -Force
+}
+
+# Set the Enabled and DisabledByDefault flags in the registry
+Set-ItemProperty -Path $clientTlsKey -Name 'Enabled' -Value 1 -Type DWord
+Set-ItemProperty -Path $clientTlsKey -Name 'DisabledByDefault' -Value 0 -Type DWord
+
+Write-Host "TLS 1.2 has been enabled on both the client and server."
