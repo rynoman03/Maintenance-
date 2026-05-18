@@ -1,6 +1,4 @@
 # Maintenance-
-Scripts used for performing maintenance tasks.
-This will evolve over time and will be improved upon as needed.
 
 Scripts and notes used for Windows systems maintenance tasks. This repository is a practical, growing collection of PowerShell-style scripts for common administrator workflows such as Active Directory group management, TLS registry configuration, printer inventory, connectivity checks, scheduled reboots, and email notifications.
 
@@ -77,27 +75,6 @@ Several script filenames contain spaces. When running them directly, quote the p
 & ".\Enable TLS 1.2 on Client and Server"
 ```
 
-
-## Quick start
-
-1. Clone or download this repository on a Windows administration workstation.
-2. Open PowerShell as Administrator when the script changes registry settings, scheduled tasks, or server configuration.
-3. Read the script comments and the matching notes in this README before running anything.
-4. Replace every placeholder value with values from your own environment.
-5. Run the script in a lab or against a test target first.
-6. Record what was changed, when it was changed, and whether a restart is required.
-
-## Before you run a script
-
-Use this checklist for each maintenance script:
-
-- Confirm the script matches the operating system and PowerShell version on the target machine.
-- Confirm you have the required permissions for the target system, domain, registry path, or print server.
-- Back up or document current settings before making changes.
-- Review all hard-coded paths, server names, email addresses, domain names, and OU paths.
-- Schedule production-impacting work during an approved maintenance window.
-- Keep a rollback plan, especially for registry, TLS, scheduled task, and reboot changes.
-
 ## Script notes
 
 ### `UserGroup`
@@ -151,7 +128,6 @@ Interactive examples:
 .\IdracManager.ps1
 .\IdracManager.ps1 -HostName 192.168.1.100 -Username root
 .\IdracManager.ps1 -HostName idrac01.example.com -GetHealth -GetPowerState
-.\IdracManager.ps1 -HostName old-idrac.example.com -GetHealth -TlsProtocol Legacy -SkipCertificateCheck
 ```
 
 Command Prompt examples:
@@ -171,16 +147,11 @@ Available read-only checks include:
 - iDRAC local users.
 - A basic security audit for enabled default/common accounts and account lockout settings.
 
-Certificate and connection notes:
+Certificate notes:
 
 - Many iDRAC interfaces use self-signed certificates. If you trust the target and need to connect anyway, add `-SkipCertificateCheck`.
 - Do not use `-SkipCertificateCheck` for untrusted networks or unknown devices because it bypasses certificate validation.
-- Windows PowerShell 5.1 sessions default to TLS 1.2 for iDRAC compatibility.
-- If Windows reports `Could not create SSL/TLS secure channel`, try `-TlsProtocol SystemDefault` first, then `-TlsProtocol Legacy` only for older iDRAC firmware that cannot negotiate TLS 1.2.
-- `-TlsProtocol Legacy` enables TLS 1.2, TLS 1.1, and TLS 1.0 in the current Windows PowerShell process; use it only on trusted management networks while planning an iDRAC firmware/certificate update.
-- Redfish requests use an explicit Basic authorization header to avoid authentication failures from iDRACs that do not complete a standard PowerShell credential challenge cleanly.
 - The script writes a timestamped log file in the repository directory by default. Use `-LogPath C:\Logs\idrac.log` to choose a different path.
-- If a Redfish call fails, the script writes the HTTP method, URL, and returned exception message to the log to make troubleshooting easier.
 
 Security notes:
 
@@ -248,15 +219,3 @@ Before use:
 - Add parameterized versions of scripts that currently rely on hard-coded values.
 - Add PowerShell Script Analyzer checks once script names and extensions are standardized.
 - Add safer dry-run behavior for scripts that modify registry, Active Directory, or scheduled tasks.
-
-## Adding new maintenance scripts
-
-When adding a new script to this repository, include enough information for another administrator to run it safely:
-
-- Use a `.ps1` extension when possible.
-- Add a short header with the purpose, author or owner, date, version, and required permissions.
-- Prefer parameters over hard-coded values.
-- Include examples for common use cases.
-- Document required modules, Windows roles, external applications, or network access.
-- Add safety controls such as `-WhatIf`, `-Confirm`, validation, and clear error messages for risky operations.
-- Update this README with the new script name, purpose, prerequisites, and any production-impact notes.
