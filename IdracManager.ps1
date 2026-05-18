@@ -27,6 +27,9 @@ param(
 
     [switch]$SkipCertificateCheck,
 
+    [ValidateSet('SystemDefault', 'Tls12', 'Tls11', 'Tls10', 'Legacy')]
+    [string]$TlsProtocol = 'Tls12',
+
     [switch]$GetHealth,
 
     [switch]$GetPowerState,
@@ -43,6 +46,55 @@ param(
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
+function Add-IdracSecurityProtocol {
+    param(
+        [Parameter(Mandatory = $true)]
+        [System.Net.SecurityProtocolType]$CurrentProtocol,
+
+        [Parameter(Mandatory = $true)]
+        [int]$ProtocolValue
+    )
+
+    $protocol = [System.Net.SecurityProtocolType]$ProtocolValue
+    $CurrentProtocol -bor $protocol
+}
+
+function Set-IdracSecurityProtocol {
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateSet('SystemDefault', 'Tls12', 'Tls11', 'Tls10', 'Legacy')]
+        [string]$Protocol
+    )
+
+    if ($PSVersionTable.PSVersion.Major -ge 6) {
+        return
+    }
+
+    $selectedProtocol = [System.Net.SecurityProtocolType]0
+
+    switch ($Protocol) {
+        'SystemDefault' {
+            $selectedProtocol = [System.Net.SecurityProtocolType]0
+        }
+        'Tls12' {
+            $selectedProtocol = Add-IdracSecurityProtocol -CurrentProtocol $selectedProtocol -ProtocolValue 3072
+        }
+        'Tls11' {
+            $selectedProtocol = Add-IdracSecurityProtocol -CurrentProtocol $selectedProtocol -ProtocolValue 768
+        }
+        'Tls10' {
+            $selectedProtocol = Add-IdracSecurityProtocol -CurrentProtocol $selectedProtocol -ProtocolValue 192
+        }
+        'Legacy' {
+            $selectedProtocol = Add-IdracSecurityProtocol -CurrentProtocol $selectedProtocol -ProtocolValue 3072
+            $selectedProtocol = Add-IdracSecurityProtocol -CurrentProtocol $selectedProtocol -ProtocolValue 768
+            $selectedProtocol = Add-IdracSecurityProtocol -CurrentProtocol $selectedProtocol -ProtocolValue 192
+        }
+    }
+
+    [System.Net.ServicePointManager]::SecurityProtocol = $selectedProtocol
+}
+
 function Initialize-IdracCertificatePolicy {
     param(
         [switch]$EnableSkip
@@ -53,21 +105,7 @@ function Initialize-IdracCertificatePolicy {
     }
 
     if ($PSVersionTable.PSVersion.Major -lt 6) {
-        if (-not ('TrustAllCertsPolicy' -as [type])) {
-            Add-Type @"
-using System.Net;
-using System.Security.Cryptography.X509Certificates;
-public class TrustAllCertsPolicy : ICertificatePolicy {
-    public bool CheckValidationResult(
-        ServicePoint srvPoint, X509Certificate certificate,
-        WebRequest request, int certificateProblem) {
-        return true;
-    }
-}
-"@
-        }
-
-        [System.Net.ServicePointManager]::CertificatePolicy = New-Object TrustAllCertsPolicy
+        [System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
     }
 }
 
@@ -78,7 +116,9 @@ function New-IdracSessionContext {
         [string]$PlainTextPassword,
         [System.Management.Automation.PSCredential]$InputCredential,
         [string]$InputLogPath,
-        [switch]$AllowUntrustedCertificate
+        [switch]$AllowUntrustedCertificate,
+        [ValidateSet('SystemDefault', 'Tls12', 'Tls11', 'Tls10', 'Legacy')]
+        [string]$InputTlsProtocol = 'Tls12'
     )
 
     if ([string]::IsNullOrWhiteSpace($ComputerName)) {
@@ -105,6 +145,7 @@ function New-IdracSessionContext {
         $InputLogPath = Join-Path -Path $PSScriptRoot -ChildPath ("idrac_manager_{0}_{1}.log" -f $safeHostName, (Get-Date -Format 'yyyyMMdd_HHmmss'))
     }
 
+    Set-IdracSecurityProtocol -Protocol $InputTlsProtocol
     Initialize-IdracCertificatePolicy -EnableSkip:$AllowUntrustedCertificate
 
     [pscustomobject]@{
@@ -113,6 +154,7 @@ function New-IdracSessionContext {
         Credential = $InputCredential
         LogPath = $InputLogPath
         SkipCertificateCheck = [bool]$AllowUntrustedCertificate
+        TlsProtocol = $InputTlsProtocol
     }
 }
 
@@ -149,15 +191,23 @@ function Invoke-IdracRedfishRequest {
     $uri = if ($Path -match '^https?://') { $Path } else { '{0}{1}' -f $Context.BaseUri, $Path }
     Write-IdracLog -Context $Context -Message "$Method $uri"
 
+    $credentialBytes = [System.Text.Encoding]::ASCII.GetBytes(('{0}:{1}' -f $Context.Credential.UserName, $Context.Credential.GetNetworkCredential().Password))
     $request = @{
         Uri = $uri
         Method = $Method
-        Credential = $Context.Credential
-        Headers = @{ Accept = 'application/json' }
-        ContentType = 'application/json'
+        Headers = @{
+            Accept = 'application/json'
+            Authorization = 'Basic {0}' -f [Convert]::ToBase64String($credentialBytes)
+        }
+        ErrorAction = 'Stop'
+    }
+
+    if ($PSVersionTable.PSVersion.Major -lt 6) {
+        $request.UseBasicParsing = $true
     }
 
     if ($null -ne $Body) {
+        $request.ContentType = 'application/json'
         $request.Body = ($Body | ConvertTo-Json -Depth 10)
     }
 
@@ -165,7 +215,14 @@ function Invoke-IdracRedfishRequest {
         $request.SkipCertificateCheck = $true
     }
 
-    Invoke-RestMethod @request
+    try {
+        Invoke-RestMethod @request
+    }
+    catch {
+        $message = 'Redfish request failed: {0} {1}. TLS mode: {2}. {3}' -f $Method, $uri, $Context.TlsProtocol, $_.Exception.Message
+        Write-IdracLog -Context $Context -Message $message -Level ERROR
+        throw $message
+    }
 }
 
 function Show-IdracObjectTable {
@@ -379,8 +436,8 @@ function Show-IdracMainMenu {
     } while ($true)
 }
 
-$context = New-IdracSessionContext -ComputerName $HostName -UserName $Username -PlainTextPassword $Password -InputCredential $Credential -InputLogPath $LogPath -AllowUntrustedCertificate:$SkipCertificateCheck
-Write-IdracLog -Context $context -Message "Started iDRAC Manager for $($context.HostName)"
+$context = New-IdracSessionContext -ComputerName $HostName -UserName $Username -PlainTextPassword $Password -InputCredential $Credential -InputLogPath $LogPath -AllowUntrustedCertificate:$SkipCertificateCheck -InputTlsProtocol $TlsProtocol
+Write-IdracLog -Context $context -Message "Started iDRAC Manager for $($context.HostName) using TLS mode $($context.TlsProtocol)"
 
 $actionRequested = $GetHealth -or $GetPowerState -or $GetFirmwareInventory -or $GetThermalSensors -or $GetUsers -or $SecurityAudit
 
