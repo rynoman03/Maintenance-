@@ -1,0 +1,23 @@
+<#
+.SYNOPSIS
+    Interactive script to create user groups, check for owner groups,
+    set ManagedBy attribute, and add users.
+#>
+
+# Import AD module (required)
+Import-Module ActiveDirectory
+
+Write-Host "=== User Group Creation Script ===" -ForegroundColor Cyan
+
+# Ask for group name
+$GroupName = Read-Host "Enter the name of the group to create"
+
+# Ask for owner group name
+$OwnerGroupName = Read-Host "Enter the name of the OWNER group"
+
+# Check if owner group exists
+$OwnerGroup = Get-ADGroup -Filter "Name -eq '$OwnerGroupName'" -ErrorAction SilentlyContinue
+
+if ($OwnerGroup) {
+    Write-Host "Owner group '$OwnerGroupName' already exists." -ForegroundColor Green
+} else {
