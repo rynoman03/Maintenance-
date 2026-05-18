@@ -43,11 +43,6 @@ param(
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
-# Dell iDRAC interfaces commonly require TLS 1.2 from Windows PowerShell 5.1.
-if ($PSVersionTable.PSEdition -eq 'Desktop') {
-    [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
-}
-
 function Initialize-IdracCertificatePolicy {
     param(
         [switch]$EnableSkip
@@ -154,23 +149,15 @@ function Invoke-IdracRedfishRequest {
     $uri = if ($Path -match '^https?://') { $Path } else { '{0}{1}' -f $Context.BaseUri, $Path }
     Write-IdracLog -Context $Context -Message "$Method $uri"
 
-    $credentialBytes = [System.Text.Encoding]::ASCII.GetBytes(('{0}:{1}' -f $Context.Credential.UserName, $Context.Credential.GetNetworkCredential().Password))
     $request = @{
         Uri = $uri
         Method = $Method
-        Headers = @{
-            Accept = 'application/json'
-            Authorization = 'Basic {0}' -f [Convert]::ToBase64String($credentialBytes)
-        }
-        ErrorAction = 'Stop'
-    }
-
-    if ($PSVersionTable.PSEdition -eq 'Desktop') {
-        $request.UseBasicParsing = $true
+        Credential = $Context.Credential
+        Headers = @{ Accept = 'application/json' }
+        ContentType = 'application/json'
     }
 
     if ($null -ne $Body) {
-        $request.ContentType = 'application/json'
         $request.Body = ($Body | ConvertTo-Json -Depth 10)
     }
 
@@ -178,14 +165,7 @@ function Invoke-IdracRedfishRequest {
         $request.SkipCertificateCheck = $true
     }
 
-    try {
-        Invoke-RestMethod @request
-    }
-    catch {
-        $message = 'Redfish request failed: {0} {1}. {2}' -f $Method, $uri, $_.Exception.Message
-        Write-IdracLog -Context $Context -Message $message -Level ERROR
-        throw $message
-    }
+    Invoke-RestMethod @request
 }
 
 function Show-IdracObjectTable {
