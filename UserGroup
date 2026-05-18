@@ -1,8 +1,8 @@
-<#
-.SYNOPSIS
-    Interactive script to create user groups, check for owner groups,
-    set ManagedBy attribute, and add users.
-#>
+############################################################################################################################
+# Created by rynoman03 08.2025 v1.0                                                                                        #
+# SYNOPSIS                                                                                                                 #
+#   Interactive script to create user groups, check for owner groups, set ManagedBy attribute, and add users.              #                                                                                                                      #
+############################################################################################################################
 
 # Import AD module (required)
 Import-Module ActiveDirectory
@@ -21,3 +21,40 @@ $OwnerGroup = Get-ADGroup -Filter "Name -eq '$OwnerGroupName'" -ErrorAction Sile
 if ($OwnerGroup) {
     Write-Host "Owner group '$OwnerGroupName' already exists." -ForegroundColor Green
 } else {
+    Write-Host "Owner group '$OwnerGroupName' does not exist. Creating it..." -ForegroundColor Yellow
+    $OwnerGroup = New-ADGroup -Name $OwnerGroupName -GroupScope Global -GroupCategory Security -Path "OU=Groups,DC=domain,DC=com" -PassThru
+    Write-Host "Created Owner group: $($OwnerGroup.Name)" -ForegroundColor Green
+}
+
+# Create main group
+$MainGroup = New-ADGroup -Name $GroupName -GroupScope Global -GroupCategory Security -Path "OU=Groups,DC=domain,DC=com" -PassThru
+Write-Host "Created main group: $($MainGroup.Name)" -ForegroundColor Green
+
+# Set ManagedBy attribute
+try {
+    Set-ADGroup $MainGroup -ManagedBy $OwnerGroup.DistinguishedName
+    Write-Host "Set ManagedBy on $($MainGroup.Name) to $($OwnerGroup.Name)" -ForegroundColor Cyan
+} catch {
+    Write-Host "Failed to set ManagedBy $" -ForegroundColor Red
+}
+
+# Ask to add users to Owner group
+$AddUsers = Read-Host "Do you want to add users to the OWNER group? (Y/N)"
+if ($AddUsers -match "^[Yy]") {
+    $UserList = Read-Host "Enter usernames (comma separated, e.g., jsmith,adoe,mjohnson)"
+    $UserArray = $UserList -split ","
+
+    foreach ($User in $UserArray) {
+        $User = $User.Trim()
+        try {
+            Add-ADGroupMember -Identity $OwnerGroup -Members $User
+            Write-Host "Added $User to $($OwnerGroup.Name)" -ForegroundColor Green
+        } catch {
+            Write-Host "Failed to add $User $" -ForegroundColor Red
+        }
+    }
+} else {
+    Write-Host "Skipping user additions." -ForegroundColor Yellow
+}
+
+Write-Host "=== Script Completed ===" -ForegroundColor Cyan
