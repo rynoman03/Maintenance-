@@ -1,3 +1,8 @@
+############################################################################################################################
+# Created by rynoman03 05.2026 v2.0                                                                                        #
+#                                                                                                                          #
+############################################################################################################################
+
 # Create a servers.txt file and place it in the same location that this script is running from. Separate list with comma's or one line per device 
 
 $serverlist=get-content .\servers.txt
