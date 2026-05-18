@@ -1,6 +1,6 @@
 # Maintenance-
 Scripts and such used for performing maintenance tasks. 
-This will evolve over time and will be improved upon as needed. I am starting off by adding what I have documented early in my career so it may be pretty rudamentary but it is a start.
+This will evolve over time and will be improved upon as needed.
 
 Scripts and notes used for Windows systems maintenance tasks. This repository is a practical, growing collection of PowerShell-style scripts for common administrator workflows such as Active Directory group management, TLS registry configuration, printer inventory, connectivity checks, scheduled reboots, and email notifications.
 
