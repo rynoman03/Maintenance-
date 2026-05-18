@@ -21,6 +21,8 @@ This repository is intentionally simple: most files live at the repository root 
 | `PingIt` | Reads a local `servers.txt` file and checks whether each server responds to `Test-Connection`. |
 | `Sendmail.ps1` | Sends a maintenance notification email through an SMTP server. Intended for use with Windows Task Scheduler or other automation. |
 | `SystemRebootTask_and_Email` | Creates a scheduled task intended to send an email and reboot a system at a scheduled time. |
+| `IdracManager.ps1` | Windows PowerShell iDRAC manager that uses Redfish over HTTPS for power state, health, firmware, thermal, user, and basic security-audit checks. |
+| `IdracManager.cmd` | Windows command prompt launcher for `IdracManager.ps1`; prefers PowerShell 7 (`pwsh.exe`) and falls back to Windows PowerShell (`powershell.exe`). |
 
 ## General structure
 
@@ -34,6 +36,7 @@ Common patterns across the repository include:
 - WMI queries for printer and driver data.
 - Windows Task Scheduler cmdlets.
 - Environment-specific placeholders that must be changed before use.
+- Redfish API calls to Dell iDRAC interfaces over HTTPS.
 
 ## Important things to know before running scripts
 
@@ -54,6 +57,7 @@ Several scripts contain placeholder values that should be updated for your envir
 - SMTP server names, sender addresses, and recipient addresses.
 - Domain user values such as `DOMAIN\user`.
 - Script paths such as `C:\scripts\sendmail.ps1`.
+- Dell iDRAC host names, IP addresses, and credentials.
 
 ### Test in a lab first
 
@@ -128,6 +132,59 @@ Before use:
 - Use an account with access to query the target print servers.
 - Replace the default print server list.
 - Expect the script to open Excel visibly while it runs.
+
+
+### `IdracManager.ps1` and `IdracManager.cmd`
+
+`IdracManager.ps1` is a Windows-native Dell iDRAC manager inspired by menu-driven iDRAC maintenance tools. It uses the Redfish API over HTTPS and can run interactively or with action switches. `IdracManager.cmd` is a convenience launcher for administrators who prefer `cmd.exe`, shortcuts, or batch files.
+
+Prerequisites:
+
+- Windows PowerShell 5.1 or PowerShell 7+.
+- Network access from the workstation to the iDRAC HTTPS endpoint, usually TCP port 443.
+- iDRAC credentials with permission to view inventory, health, and user information.
+- Power-control permissions if you use the power-action menu.
+
+Interactive examples:
+
+```powershell
+.\IdracManager.ps1
+.\IdracManager.ps1 -HostName 192.168.1.100 -Username root
+.\IdracManager.ps1 -HostName idrac01.example.com -GetHealth -GetPowerState
+```
+
+Command Prompt examples:
+
+```cmd
+IdracManager.cmd
+IdracManager.cmd -HostName 192.168.1.100 -Username root
+IdracManager.cmd -HostName idrac01.example.com -SecurityAudit
+```
+
+Available read-only checks include:
+
+- Power state and basic system identity.
+- System, manager, and chassis health.
+- Firmware inventory.
+- Temperature and fan sensors.
+- iDRAC local users.
+- A basic security audit for enabled default/common accounts and account lockout settings.
+
+Certificate and connection notes:
+
+- Many iDRAC interfaces use self-signed certificates. If you trust the target and need to connect anyway, add `-SkipCertificateCheck`.
+- Do not use `-SkipCertificateCheck` for untrusted networks or unknown devices because it bypasses certificate validation.
+- Windows PowerShell 5.1 sessions force TLS 1.2 for iDRAC compatibility.
+- Redfish requests use an explicit Basic authorization header to avoid authentication failures from iDRACs that do not complete a standard PowerShell credential challenge cleanly.
+- The script writes a timestamped log file in the repository directory by default. Use `-LogPath C:\Logs\idrac.log` to choose a different path.
+- If a Redfish call fails, the script writes the HTTP method, URL, and returned exception message to the log to make troubleshooting easier.
+
+Security notes:
+
+- Prefer secure prompts by omitting `-Password`; the script will use `Get-Credential`.
+- Avoid putting passwords in command history, scripts, shortcuts, or scheduled task arguments.
+- Test against a non-production iDRAC before running checks broadly.
+- Power actions are gated behind PowerShell confirmation prompts because they can interrupt running systems.
 
 ### `PingIt`
 
