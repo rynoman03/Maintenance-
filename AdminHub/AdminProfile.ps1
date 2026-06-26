@@ -83,14 +83,44 @@ function Restart-ServiceByName {
     }
 }
 
+function Test-PendingReboot {
+    $reasons = @()
+
+    if (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending') {
+        $reasons += 'Component-Based Servicing'
+    }
+    if (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired') {
+        $reasons += 'Windows Update'
+    }
+    $pfro = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager' `
+                -Name PendingFileRenameOperations -ErrorAction SilentlyContinue).PendingFileRenameOperations
+    if ($pfro) { $reasons += 'Pending file rename' }
+
+    $cn  = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\ComputerName\ActiveComputerName' `
+                -Name ComputerName -ErrorAction SilentlyContinue).ComputerName
+    $pcn = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\ComputerName\ComputerName' `
+                -Name ComputerName -ErrorAction SilentlyContinue).ComputerName
+    if ($cn -and $pcn -and ($cn -ne $pcn)) { $reasons += 'Pending computer rename' }
+
+    return $reasons
+}
+
 function Get-PendingUpdates {
     Write-Header "Pending Windows Updates"
     if (-not (Get-Module -ListAvailable PSWindowsUpdate)) {
         Write-Host "  PSWindowsUpdate module not found. Install with: Install-Module PSWindowsUpdate" -ForegroundColor Yellow
-        return
+    } else {
+        Import-Module PSWindowsUpdate
+        Get-WindowsUpdate | Select-Object KB, Title, Size, MsrcSeverity | Format-Table -AutoSize
     }
-    Import-Module PSWindowsUpdate
-    Get-WindowsUpdate | Select-Object KB, Title, Size, MsrcSeverity | Format-Table -AutoSize
+
+    Write-Host ""
+    $rebootReasons = Test-PendingReboot
+    if ($rebootReasons.Count -gt 0) {
+        Write-Host "  REBOOT PENDING - $($rebootReasons -join ', ')" -ForegroundColor Red
+    } else {
+        Write-Host "  No reboot pending." -ForegroundColor Green
+    }
 }
 
 function Get-TopMemory {
