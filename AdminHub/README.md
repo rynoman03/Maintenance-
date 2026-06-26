@@ -19,6 +19,20 @@ administrative tasks — with the option to drop to a normal shell at any time.
         Server Administration Console
 ```
 
+## Screenshots
+
+The menu shown at startup:
+
+![Admin Hub menu](images/menu.svg)
+
+Output of **Export Health Report** `[E]` — the pass/fail summary printed on
+screen before the full report is written to disk:
+
+![Export Health Report output](images/health-report.svg)
+
+> These are illustrative renderings of the console output, not captures from a
+> specific server.
+
 ## Menu options
 
 | Key | Option                      | Type        |
