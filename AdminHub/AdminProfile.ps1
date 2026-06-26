@@ -58,6 +58,56 @@ function Test-IsVirtual {
     return ($sig -match 'VMware|Virtual|KVM|Xen|QEMU|Hyper-V|VirtualBox|Bochs|Parallels|Amazon|Google')
 }
 
+function Test-IsDell {
+    $cs = Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue
+    return ($cs.Manufacturer -match 'Dell')
+}
+
+function Get-RacadmPath {
+    # Local racadm, installed with Dell iDRAC Tools. Checked on PATH first.
+    $cmd = Get-Command racadm -ErrorAction SilentlyContinue
+    if ($cmd) { return $cmd.Source }
+    $candidates = @(
+        "$env:ProgramFiles\Dell\SysMgt\iDRACTools\racadm\racadm.exe",
+        "$env:ProgramFiles\Dell\SysMgt\idrac\racadm.exe",
+        "${env:ProgramFiles(x86)}\Dell\SysMgt\iDRACTools\racadm\racadm.exe"
+    )
+    foreach ($c in $candidates) { if (Test-Path $c) { return $c } }
+    return $null
+}
+
+function Get-DellStorageHealth {
+    # Best-effort parse of local racadm storage output. Captures raw output too,
+    # since iDRAC property names vary slightly by firmware.
+    $racadm = Get-RacadmPath
+    if (-not $racadm) { return $null }
+
+    $pdisks = & $racadm storage get pdisks -o 2>&1
+    $vdisks = & $racadm storage get vdisks -o 2>&1
+    $raw    = (@('# pdisks') + $pdisks + @('', '# vdisks') + $vdisks) -join "`n"
+
+    if (-not $pdisks) {
+        return [PSCustomObject]@{ Status = 'WARN'; Detail = 'racadm returned no data'; Raw = $raw }
+    }
+
+    $bad = @()
+    $current = '(disk)'
+    foreach ($line in @($pdisks) + @($vdisks)) {
+        if ($line -match '^(Disk\.|PhysicalDisk|Bay|Virtual)') { $current = ($line -split '\s')[0].Trim() }
+        if ($line -match 'Status\s*=\s*(.+?)\s*$' -and $Matches[1] -notmatch '^(Ok|Online|Good)$') {
+            $bad += "$current Status=$($Matches[1].Trim())"
+        }
+        if ($line -match 'PredictiveFailureState\s*=\s*(.+?)\s*$' -and $Matches[1] -notmatch '^(Inactive|Unknown)\s*$') {
+            $bad += "$current PredictiveFailure=$($Matches[1].Trim())"
+        }
+    }
+
+    if ($bad.Count -gt 0) {
+        return [PSCustomObject]@{ Status = 'FAIL'; Detail = ($bad -join '; '); Raw = $raw }
+    }
+    return [PSCustomObject]@{ Status = 'OK'; Detail = 'all physical/virtual disks Ok'; Raw = $raw }
+}
+
 function Get-DiskSpace {
     Write-Header "Disk Space"
     Get-PSDrive -PSProvider FileSystem |
@@ -237,24 +287,34 @@ function Get-HealthSummary {
         $checks += [PSCustomObject]@{ Name = 'Pending reboot'; Status = 'OK'; Detail = 'none' }
     }
 
-    # --- Physical disk / SMART health (skip on virtual machines) ---
+    # --- Disk health (skip on VMs). On Dell hardware the PERC controller hides
+    #     physical disks from Windows, so prefer racadm/iDRAC when available;
+    #     otherwise fall back to Get-PhysicalDisk + SMART predicted-failure. ---
     if (-not (Test-IsVirtual)) {
-        $pd = Get-PhysicalDisk -ErrorAction SilentlyContinue
-        if ($pd) {
-            $bad = @()
-            foreach ($d in $pd) {
-                if ($d.HealthStatus -and $d.HealthStatus -ne 'Healthy') {
-                    $bad += "$($d.FriendlyName): $($d.HealthStatus)"
-                }
+        $dell = (Test-IsDell) -and (Get-RacadmPath)
+        if ($dell) {
+            $ds = Get-DellStorageHealth
+            if ($ds) {
+                $checks += [PSCustomObject]@{ Name = 'RAID/disk (iDRAC)'; Status = $ds.Status; Detail = $ds.Detail }
             }
-            $fp = Get-CimInstance -Namespace root\wmi -ClassName MSStorageDriver_FailurePredictStatus -ErrorAction SilentlyContinue
-            foreach ($f in $fp) { if ($f.PredictFailure) { $bad += 'SMART predicted failure' } }
+        } else {
+            $pd = Get-PhysicalDisk -ErrorAction SilentlyContinue
+            if ($pd) {
+                $bad = @()
+                foreach ($d in $pd) {
+                    if ($d.HealthStatus -and $d.HealthStatus -ne 'Healthy') {
+                        $bad += "$($d.FriendlyName): $($d.HealthStatus)"
+                    }
+                }
+                $fp = Get-CimInstance -Namespace root\wmi -ClassName MSStorageDriver_FailurePredictStatus -ErrorAction SilentlyContinue
+                foreach ($f in $fp) { if ($f.PredictFailure) { $bad += 'SMART predicted failure' } }
 
-            if ($bad.Count -gt 0) {
-                $checks += [PSCustomObject]@{ Name = 'Disk health'; Status = 'FAIL'; Detail = ($bad -join '; ') }
-            } else {
-                $n = ($pd | Measure-Object).Count
-                $checks += [PSCustomObject]@{ Name = 'Disk health'; Status = 'OK'; Detail = "$n physical disk(s) healthy" }
+                if ($bad.Count -gt 0) {
+                    $checks += [PSCustomObject]@{ Name = 'Disk health'; Status = 'FAIL'; Detail = ($bad -join '; ') }
+                } else {
+                    $n = ($pd | Measure-Object).Count
+                    $checks += [PSCustomObject]@{ Name = 'Disk health'; Status = 'OK'; Detail = "$n physical disk(s) healthy" }
+                }
             }
         }
     }
@@ -344,11 +404,17 @@ function Export-HealthReport {
             Format-Table -AutoSize | Out-String
 
         if (-not (Test-IsVirtual)) {
-            "`n[PHYSICAL DISK HEALTH]"
-            $pd = Get-PhysicalDisk -ErrorAction SilentlyContinue |
-                Select-Object FriendlyName, MediaType, HealthStatus, OperationalStatus,
-                    @{N='Size(GB)'; E={[math]::Round($_.Size/1GB,0)}}
-            if ($pd) { $pd | Format-Table -AutoSize | Out-String } else { "  (no physical disk data)`n" }
+            if ((Test-IsDell) -and (Get-RacadmPath)) {
+                "`n[STORAGE HEALTH - iDRAC / racadm]"
+                $ds = Get-DellStorageHealth
+                if ($ds) { "  Verdict: $($ds.Status) - $($ds.Detail)`n"; $ds.Raw } else { "  (racadm unavailable)`n" }
+            } else {
+                "`n[PHYSICAL DISK HEALTH]"
+                $pd = Get-PhysicalDisk -ErrorAction SilentlyContinue |
+                    Select-Object FriendlyName, MediaType, HealthStatus, OperationalStatus,
+                        @{N='Size(GB)'; E={[math]::Round($_.Size/1GB,0)}}
+                if ($pd) { $pd | Format-Table -AutoSize | Out-String } else { "  (no physical disk data)`n" }
+            }
         }
 
         "`n[STOPPED AUTOMATIC SERVICES]"

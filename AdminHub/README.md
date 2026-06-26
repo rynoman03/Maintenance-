@@ -49,8 +49,11 @@ item, plus an overall status:
 
 - **Disk space** — flags the busiest fixed drive (WARN ≥ 80%, FAIL ≥ 90%)
 - **Pending reboot** — CBS, Windows Update, pending file/computer rename
-- **Disk health** — physical-disk `HealthStatus` + SMART predicted-failure
-  (`MSStorageDriver_FailurePredictStatus`); skipped automatically on VMs
+- **Disk health** — on Dell hardware with local `racadm` installed, queries the
+  iDRAC (`racadm storage get pdisks/vdisks`) and flags any disk that is not `Ok`
+  or shows a predictive-failure state (reported as `RAID/disk (iDRAC)`).
+  Otherwise falls back to physical-disk `HealthStatus` + SMART predicted-failure
+  (`MSStorageDriver_FailurePredictStatus`). Skipped automatically on VMs.
 - **Auto services** — automatic-start services that are not running
 - **Memory** — physical RAM in use (WARN ≥ 85%, FAIL ≥ 95%)
 - **Pagefile** — page file in use (WARN ≥ 80%, FAIL ≥ 95%)
@@ -71,8 +74,12 @@ falls back to cumulative CPU time if live sampling is unavailable.
 
 > **Hardware RAID note:** the OS only sees the virtual disk presented by a RAID
 > controller, so `Get-PhysicalDisk`/SMART can't see drives behind hardware RAID.
-> Use your controller's vendor CLI (e.g. `perccli`/`storcli`, `ssacli`, Dell
-> OMSA) for true array health on those machines.
+> On **Dell** servers this tool uses local `racadm` (iDRAC Tools) to read true
+> array/drive health. `racadm` property names vary by iDRAC firmware, so the
+> parser is best-effort and the report also captures the raw `racadm storage`
+> output — verify the `RAID/disk (iDRAC)` verdict against your fleet and adjust
+> the parsing in `Get-DellStorageHealth` if a field name differs. For non-Dell
+> hardware, use the appropriate vendor CLI (`perccli`/`storcli`, `ssacli`, etc.).
 
 ## Files
 
