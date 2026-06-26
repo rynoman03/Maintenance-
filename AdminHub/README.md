@@ -52,7 +52,10 @@ item, plus an overall status:
 - **Disk health** — on Dell hardware with local `racadm` installed, queries the
   iDRAC (`racadm storage get pdisks/vdisks`) and flags any disk that is not `Ok`
   or shows a predictive-failure state (reported as `RAID/disk (iDRAC)`).
-  Otherwise falls back to physical-disk `HealthStatus` + SMART predicted-failure
+  Requires **PowerEdge 12th generation (R720-era) or newer** — that is when the
+  `racadm storage` command set appeared (iDRAC7 fw 1.30.30+, iDRAC8/9); older
+  iDRAC is reported as unsupported rather than failed. Otherwise falls back to
+  physical-disk `HealthStatus` + SMART predicted-failure
   (`MSStorageDriver_FailurePredictStatus`). Skipped automatically on VMs.
 - **Auto services** — automatic-start services that are not running
 - **Memory** — physical RAM in use (WARN ≥ 85%, FAIL ≥ 95%)
@@ -74,11 +77,13 @@ falls back to cumulative CPU time if live sampling is unavailable.
 
 > **Hardware RAID note:** the OS only sees the virtual disk presented by a RAID
 > controller, so `Get-PhysicalDisk`/SMART can't see drives behind hardware RAID.
-> On **Dell** servers this tool uses local `racadm` (iDRAC Tools) to read true
-> array/drive health. `racadm` property names vary by iDRAC firmware, so the
-> parser is best-effort and the report also captures the raw `racadm storage`
-> output — verify the `RAID/disk (iDRAC)` verdict against your fleet and adjust
-> the parsing in `Get-DellStorageHealth` if a field name differs. For non-Dell
+> On **Dell** servers (PowerEdge **12th generation / R720-era and newer**) this
+> tool uses local `racadm` (iDRAC Tools) to read true array/drive health.
+> `racadm` property names vary by iDRAC firmware, so the parser is best-effort
+> and the report also captures the raw `racadm storage` output — verify the
+> `RAID/disk (iDRAC)` verdict against your fleet and adjust the parsing in
+> `Get-DellStorageHealth` if a field name differs. Older generations lack the
+> `racadm storage` command set and are reported as unsupported. For non-Dell
 > hardware, use the appropriate vendor CLI (`perccli`/`storcli`, `ssacli`, etc.).
 
 ## Files

@@ -79,6 +79,9 @@ function Get-RacadmPath {
 function Get-DellStorageHealth {
     # Best-effort parse of local racadm storage output. Captures raw output too,
     # since iDRAC property names vary slightly by firmware.
+    # NOTE: the 'racadm storage' command set requires PowerEdge 12th generation
+    # (R720-era, iDRAC7 fw 1.30.30+) or newer; older iDRAC has no 'storage'
+    # subcommand and is reported as unsupported rather than failed.
     $racadm = Get-RacadmPath
     if (-not $racadm) { return $null }
 
@@ -86,6 +89,10 @@ function Get-DellStorageHealth {
     $vdisks = & $racadm storage get vdisks -o 2>&1
     $raw    = (@('# pdisks') + $pdisks + @('', '# vdisks') + $vdisks) -join "`n"
 
+    if ($raw -match 'not a valid|Invalid subcommand|not supported|UnableToFind|ERROR:') {
+        return [PSCustomObject]@{ Status = 'WARN'
+            Detail = 'racadm storage not supported (needs 12th gen / iDRAC7 1.30.30+)'; Raw = $raw }
+    }
     if (-not $pdisks) {
         return [PSCustomObject]@{ Status = 'WARN'; Detail = 'racadm returned no data'; Raw = $raw }
     }
