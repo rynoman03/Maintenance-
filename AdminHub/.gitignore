@@ -1,0 +1,13 @@
+# Generated health reports
+AdminReports/
+*.txt
+
+# Profile backups created during deployment
+*.bak_*
+*.bak
+
+# OS / editor noise
+Thumbs.db
+desktop.ini
+.vs/
+*.user
