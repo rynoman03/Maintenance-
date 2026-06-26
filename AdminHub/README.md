@@ -24,7 +24,7 @@ administrative tasks — with the option to drop to a normal shell at any time.
 | Key | Option                      | Type        |
 |-----|-----------------------------|-------------|
 | 1   | Disk Space                  | Read        |
-| 2   | Top Processes (CPU)         | Read        |
+| 2   | Top Resource Users (live)   | Read        |
 | 3   | Restart a Service           | Action      |
 | 4   | Pending Windows Updates     | Action      |
 | 5   | Full System Health Check    | Read        |
@@ -49,15 +49,30 @@ item, plus an overall status:
 
 - **Disk space** — flags the busiest fixed drive (WARN ≥ 80%, FAIL ≥ 90%)
 - **Pending reboot** — CBS, Windows Update, pending file/computer rename
+- **Disk health** — physical-disk `HealthStatus` + SMART predicted-failure
+  (`MSStorageDriver_FailurePredictStatus`); skipped automatically on VMs
 - **Auto services** — automatic-start services that are not running
 - **Memory** — physical RAM in use (WARN ≥ 85%, FAIL ≥ 95%)
 - **Pagefile** — page file in use (WARN ≥ 80%, FAIL ≥ 95%)
 - **System errors (24h)** — error events in the System log in the last 24 hours
 - **Uptime** — time since last boot
 
-`[E]` writes the summary plus supporting detail tables (disk, stopped services,
-recent errors, top memory, active sessions) to a timestamped file at
-`C:\AdminReports\HealthReport_<COMPUTERNAME>_<timestamp>.txt`.
+`[E]` writes the summary plus supporting detail tables (disk, physical-disk
+health, stopped services, recent errors, top memory, active sessions) to a
+timestamped file at `C:\AdminReports\HealthReport_<COMPUTERNAME>_<timestamp>.txt`.
+
+### Top Resource Users `[2]`
+
+Samples live performance counters for a few seconds to show an accurate *current*
+top-CPU list (averaged, normalized to total CPU) alongside top memory consumers.
+Note: Windows keeps no per-process history, so this is a point-in-time view, not
+a 24-hour trend. On non-English systems the counter path may differ; the command
+falls back to cumulative CPU time if live sampling is unavailable.
+
+> **Hardware RAID note:** the OS only sees the virtual disk presented by a RAID
+> controller, so `Get-PhysicalDisk`/SMART can't see drives behind hardware RAID.
+> Use your controller's vendor CLI (e.g. `perccli`/`storcli`, `ssacli`, Dell
+> OMSA) for true array health on those machines.
 
 ## Files
 

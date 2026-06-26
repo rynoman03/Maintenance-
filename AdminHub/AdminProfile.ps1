@@ -52,6 +52,12 @@ function Write-Header {
     Write-Host "$line" -ForegroundColor DarkCyan
 }
 
+function Test-IsVirtual {
+    $cs = Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue
+    $sig = "$($cs.Manufacturer) $($cs.Model)"
+    return ($sig -match 'VMware|Virtual|KVM|Xen|QEMU|Hyper-V|VirtualBox|Bochs|Parallels|Amazon|Google')
+}
+
 function Get-DiskSpace {
     Write-Header "Disk Space"
     Get-PSDrive -PSProvider FileSystem |
@@ -62,13 +68,43 @@ function Get-DiskSpace {
         Format-Table -AutoSize
 }
 
-function Get-TopProcesses {
-    Write-Header "Top 15 Processes by CPU"
-    Get-Process |
-        Sort-Object CPU -Descending |
-        Select-Object -First 15 Name, Id,
-            @{N='CPU(s)'; E={[math]::Round($_.CPU,2)}},
-            @{N='Mem(MB)';E={[math]::Round($_.WorkingSet/1MB,2)}} |
+function Get-TopResourceUsers {
+    param([int]$Seconds = 5, [int]$Top = 10)
+    Write-Header "Top Resource Users (CPU sampled over ${Seconds}s)"
+
+    $cores = (Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue).NumberOfLogicalProcessors
+    if (-not $cores) { $cores = 1 }
+
+    # --- Top CPU: average live samples for an accurate 'now' reading ---
+    Write-Host "  Sampling CPU..." -ForegroundColor DarkGray
+    $samples = Get-Counter '\Process(*)\% Processor Time' -SampleInterval 1 -MaxSamples $Seconds -ErrorAction SilentlyContinue
+
+    if ($samples) {
+        $cpu = @{}
+        foreach ($s in $samples.CounterSamples) {
+            $n = $s.InstanceName
+            if ($n -eq '_total' -or $n -eq 'idle') { continue }
+            if (-not $cpu.ContainsKey($n)) { $cpu[$n] = [System.Collections.ArrayList]@() }
+            [void]$cpu[$n].Add($s.CookedValue)
+        }
+        Write-Host "`n  Top $Top by CPU (% of total CPU):" -ForegroundColor Cyan
+        $cpu.GetEnumerator() | ForEach-Object {
+            [PSCustomObject]@{
+                Name   = $_.Key
+                'CPU%' = [math]::Round((($_.Value | Measure-Object -Average).Average / $cores), 1)
+            }
+        } | Sort-Object 'CPU%' -Descending | Select-Object -First $Top | Format-Table -AutoSize
+    } else {
+        Write-Host "  Live sampling unavailable; falling back to cumulative CPU time." -ForegroundColor Yellow
+        Get-Process | Sort-Object CPU -Descending | Select-Object -First $Top Name, Id,
+            @{N='CPU(s)'; E={[math]::Round($_.CPU,2)}} | Format-Table -AutoSize
+    }
+
+    # --- Top memory: current working set ---
+    Write-Host "  Top $Top by Memory (working set):" -ForegroundColor Cyan
+    Get-Process | Sort-Object WorkingSet -Descending | Select-Object -First $Top Name, Id,
+        @{N='Mem(MB)';       E={[math]::Round($_.WorkingSet / 1MB, 2)}},
+        @{N='PrivateMem(MB)';E={[math]::Round($_.PrivateMemorySize64 / 1MB, 2)}} |
         Format-Table -AutoSize
 }
 
@@ -201,6 +237,28 @@ function Get-HealthSummary {
         $checks += [PSCustomObject]@{ Name = 'Pending reboot'; Status = 'OK'; Detail = 'none' }
     }
 
+    # --- Physical disk / SMART health (skip on virtual machines) ---
+    if (-not (Test-IsVirtual)) {
+        $pd = Get-PhysicalDisk -ErrorAction SilentlyContinue
+        if ($pd) {
+            $bad = @()
+            foreach ($d in $pd) {
+                if ($d.HealthStatus -and $d.HealthStatus -ne 'Healthy') {
+                    $bad += "$($d.FriendlyName): $($d.HealthStatus)"
+                }
+            }
+            $fp = Get-CimInstance -Namespace root\wmi -ClassName MSStorageDriver_FailurePredictStatus -ErrorAction SilentlyContinue
+            foreach ($f in $fp) { if ($f.PredictFailure) { $bad += 'SMART predicted failure' } }
+
+            if ($bad.Count -gt 0) {
+                $checks += [PSCustomObject]@{ Name = 'Disk health'; Status = 'FAIL'; Detail = ($bad -join '; ') }
+            } else {
+                $n = ($pd | Measure-Object).Count
+                $checks += [PSCustomObject]@{ Name = 'Disk health'; Status = 'OK'; Detail = "$n physical disk(s) healthy" }
+            }
+        }
+    }
+
     # --- Stopped automatic services ---
     $stopped = Get-Service -ErrorAction SilentlyContinue |
         Where-Object { $_.StartType -eq 'Automatic' -and $_.Status -ne 'Running' }
@@ -285,6 +343,14 @@ function Export-HealthReport {
                 @{N='Used%';     E={ $t=$_.Used+$_.Free; if($t){[math]::Round($_.Used/$t*100,0)}else{0} }} |
             Format-Table -AutoSize | Out-String
 
+        if (-not (Test-IsVirtual)) {
+            "`n[PHYSICAL DISK HEALTH]"
+            $pd = Get-PhysicalDisk -ErrorAction SilentlyContinue |
+                Select-Object FriendlyName, MediaType, HealthStatus, OperationalStatus,
+                    @{N='Size(GB)'; E={[math]::Round($_.Size/1GB,0)}}
+            if ($pd) { $pd | Format-Table -AutoSize | Out-String } else { "  (no physical disk data)`n" }
+        }
+
         "`n[STOPPED AUTOMATIC SERVICES]"
         $svc = Get-Service | Where-Object { $_.StartType -eq 'Automatic' -and $_.Status -ne 'Running' } |
             Select-Object DisplayName, Name, Status
@@ -322,7 +388,7 @@ function Export-HealthReport {
 function Invoke-SystemHealthCheck {
     Write-HealthSummary (Get-HealthSummary)
     Get-DiskSpace
-    Get-TopProcesses
+    Get-TopResourceUsers -Seconds 3
 }
 
 function Invoke-DiskCleanup {
@@ -425,7 +491,7 @@ function Show-AdminMenu {
         Write-Host "  SERVER ADMIN MENU  -  $env:COMPUTERNAME" -ForegroundColor White
         Write-Host ("=" * 60) -ForegroundColor DarkGray
         Write-Host "  [1]  Disk Space"              -ForegroundColor Green
-        Write-Host "  [2]  Top Processes (CPU)"     -ForegroundColor Green
+        Write-Host "  [2]  Top Resource Users (live)"-ForegroundColor Green
         Write-Host "  [3]  Restart a Service"       -ForegroundColor Yellow
         Write-Host "  [4]  Pending Windows Updates" -ForegroundColor Yellow
         Write-Host "  [5]  Full System Health Check"-ForegroundColor Cyan
@@ -447,7 +513,7 @@ function Show-AdminMenu {
         $ranTask = $true
         switch ($choice.ToUpper()) {
             '1' { Get-DiskSpace }
-            '2' { Get-TopProcesses }
+            '2' { Get-TopResourceUsers }
             '3' { Restart-ServiceByName }
             '4' { Get-PendingUpdates }
             '5' { Invoke-SystemHealthCheck }
