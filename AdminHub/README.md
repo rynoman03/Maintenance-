@@ -41,6 +41,24 @@ Exiting leaves all task functions loaded in the session; type `Show-AdminMenu`
 at any time to reopen the menu. The menu also shows this tip on screen each time
 it is drawn.
 
+### Health checks
+
+Both **Full System Health Check** `[5]` and **Export Health Report** `[E]` run a
+set of pass/fail checks and print a summary verdict (`OK` / `WARN` / `FAIL`) per
+item, plus an overall status:
+
+- **Disk space** — flags the busiest fixed drive (WARN ≥ 80%, FAIL ≥ 90%)
+- **Pending reboot** — CBS, Windows Update, pending file/computer rename
+- **Auto services** — automatic-start services that are not running
+- **Memory** — physical RAM in use (WARN ≥ 85%, FAIL ≥ 95%)
+- **Pagefile** — page file in use (WARN ≥ 80%, FAIL ≥ 95%)
+- **System errors (24h)** — error events in the System log in the last 24 hours
+- **Uptime** — time since last boot
+
+`[E]` writes the summary plus supporting detail tables (disk, stopped services,
+recent errors, top memory, active sessions) to a timestamped file at
+`C:\AdminReports\HealthReport_<COMPUTERNAME>_<timestamp>.txt`.
+
 ## Files
 
 | File                       | Purpose                                                        |

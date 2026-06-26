@@ -177,6 +177,83 @@ function Get-ActiveSessions {
     } | Format-Table -AutoSize
 }
 
+function Get-HealthSummary {
+    # Returns an ordered list of health checks, each with Status (OK/WARN/FAIL)
+    # and a short Detail string. Shared by the on-screen check and the report.
+    $checks = @()
+
+    # --- Disk space (worst fixed drive) ---
+    $worst = $null; $worstPct = 0
+    foreach ($d in Get-PSDrive -PSProvider FileSystem -ErrorAction SilentlyContinue) {
+        $tot = $d.Used + $d.Free
+        if ($tot -le 0) { continue }
+        $pct = [math]::Round($d.Used / $tot * 100, 0)
+        if ($pct -gt $worstPct) { $worstPct = $pct; $worst = $d.Name }
+    }
+    $st = if ($worstPct -ge 90) { 'FAIL' } elseif ($worstPct -ge 80) { 'WARN' } else { 'OK' }
+    $checks += [PSCustomObject]@{ Name = 'Disk space'; Status = $st; Detail = "highest used: ${worst}: ${worstPct}%" }
+
+    # --- Pending reboot ---
+    $rb = Test-PendingReboot
+    if ($rb.Count -gt 0) {
+        $checks += [PSCustomObject]@{ Name = 'Pending reboot'; Status = 'WARN'; Detail = ($rb -join ', ') }
+    } else {
+        $checks += [PSCustomObject]@{ Name = 'Pending reboot'; Status = 'OK'; Detail = 'none' }
+    }
+
+    # --- Stopped automatic services ---
+    $stopped = Get-Service -ErrorAction SilentlyContinue |
+        Where-Object { $_.StartType -eq 'Automatic' -and $_.Status -ne 'Running' }
+    $cnt = ($stopped | Measure-Object).Count
+    if ($cnt -gt 0) {
+        $names = ($stopped | Select-Object -First 4 -ExpandProperty Name) -join ', '
+        $checks += [PSCustomObject]@{ Name = 'Auto services'; Status = 'WARN'; Detail = "$cnt stopped ($names)" }
+    } else {
+        $checks += [PSCustomObject]@{ Name = 'Auto services'; Status = 'OK'; Detail = 'all running' }
+    }
+
+    # --- Memory utilization ---
+    $os = Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue
+    if ($os -and $os.TotalVisibleMemorySize -gt 0) {
+        $memPct = [math]::Round((1 - $os.FreePhysicalMemory / $os.TotalVisibleMemorySize) * 100, 0)
+        $st = if ($memPct -ge 95) { 'FAIL' } elseif ($memPct -ge 85) { 'WARN' } else { 'OK' }
+        $checks += [PSCustomObject]@{ Name = 'Memory'; Status = $st; Detail = "${memPct}% used" }
+    }
+
+    # --- Pagefile utilization ---
+    $pf = Get-CimInstance Win32_PageFileUsage -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($pf -and $pf.AllocatedBaseSize -gt 0) {
+        $pfPct = [math]::Round($pf.CurrentUsage / $pf.AllocatedBaseSize * 100, 0)
+        $st = if ($pfPct -ge 95) { 'FAIL' } elseif ($pfPct -ge 80) { 'WARN' } else { 'OK' }
+        $checks += [PSCustomObject]@{ Name = 'Pagefile'; Status = $st; Detail = "${pfPct}% used" }
+    }
+
+    # --- Recent error events (System log, last 24h) ---
+    $since = (Get-Date).AddHours(-24)
+    $errCount = (Get-EventLog -LogName System -EntryType Error -After $since -ErrorAction SilentlyContinue |
+        Measure-Object).Count
+    $st = if ($errCount -gt 0) { 'WARN' } else { 'OK' }
+    $checks += [PSCustomObject]@{ Name = 'System errors (24h)'; Status = $st; Detail = "$errCount error event(s)" }
+
+    # --- Uptime (informational) ---
+    if ($os) {
+        $uptime = (Get-Date) - $os.LastBootUpTime
+        $checks += [PSCustomObject]@{ Name = 'Uptime'; Status = 'OK'
+            Detail = ("{0}d {1}h since last boot" -f $uptime.Days, $uptime.Hours) }
+    }
+
+    return $checks
+}
+
+function Write-HealthSummary {
+    param($Checks)
+    Write-Header "Health Summary - $env:COMPUTERNAME"
+    foreach ($c in $Checks) {
+        $color = switch ($c.Status) { 'OK' { 'Green' } 'WARN' { 'Yellow' } 'FAIL' { 'Red' } default { 'Gray' } }
+        Write-Host ("  [{0,-4}] {1,-20} {2}" -f $c.Status, $c.Name, $c.Detail) -ForegroundColor $color
+    }
+}
+
 function Export-HealthReport {
     $stamp   = Get-Date -Format 'yyyyMMdd_HHmmss'
     $outDir  = "$env:SystemDrive\AdminReports"
@@ -184,25 +261,39 @@ function Export-HealthReport {
 
     if (-not (Test-Path $outDir)) { New-Item -ItemType Directory $outDir | Out-Null }
 
+    $summary = Get-HealthSummary
+    $overall = if ($summary.Status -contains 'FAIL') { 'FAIL' }
+               elseif ($summary.Status -contains 'WARN') { 'WARN' }
+               else { 'OK' }
+
     $report = & {
         "=" * 60
-        "  SERVER HEALTH REPORT — $env:COMPUTERNAME"
+        "  SERVER HEALTH REPORT - $env:COMPUTERNAME"
         "  Generated: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
+        "  Overall status: $overall"
         "=" * 60
+
+        "`n[SUMMARY]"
+        $summary | ForEach-Object { "  [{0,-4}] {1,-20} {2}" -f $_.Status, $_.Name, $_.Detail }
 
         "`n[DISK SPACE]"
         Get-PSDrive -PSProvider FileSystem |
             Select-Object Name,
                 @{N='Used(GB)';  E={[math]::Round($_.Used/1GB,2)}},
                 @{N='Free(GB)';  E={[math]::Round($_.Free/1GB,2)}},
-                @{N='Total(GB)'; E={[math]::Round(($_.Used+$_.Free)/1GB,2)}} |
+                @{N='Total(GB)'; E={[math]::Round(($_.Used+$_.Free)/1GB,2)}},
+                @{N='Used%';     E={ $t=$_.Used+$_.Free; if($t){[math]::Round($_.Used/$t*100,0)}else{0} }} |
             Format-Table -AutoSize | Out-String
 
-        "`n[TOP 15 PROCESSES - CPU]"
-        Get-Process | Sort-Object CPU -Descending | Select-Object -First 15 Name, Id,
-            @{N='CPU(s)'; E={[math]::Round($_.CPU,2)}},
-            @{N='Mem(MB)';E={[math]::Round($_.WorkingSet/1MB,2)}} |
-            Format-Table -AutoSize | Out-String
+        "`n[STOPPED AUTOMATIC SERVICES]"
+        $svc = Get-Service | Where-Object { $_.StartType -eq 'Automatic' -and $_.Status -ne 'Running' } |
+            Select-Object DisplayName, Name, Status
+        if ($svc) { $svc | Format-Table -AutoSize | Out-String } else { "  (none)`n" }
+
+        "`n[RECENT SYSTEM ERRORS - last 24h]"
+        $ev = Get-EventLog -LogName System -EntryType Error -After ((Get-Date).AddHours(-24)) -Newest 20 -ErrorAction SilentlyContinue |
+            Select-Object TimeGenerated, Source, EventID, Message
+        if ($ev) { $ev | Format-Table -AutoSize -Wrap | Out-String } else { "  (none)`n" }
 
         "`n[TOP 10 PROCESSES - MEMORY]"
         Get-Process | Sort-Object WorkingSet -Descending | Select-Object -First 10 Name, Id,
@@ -213,22 +304,23 @@ function Export-HealthReport {
         "`n[ACTIVE SESSIONS]"
         (query session 2>$null) -join "`n"
 
-        "`n[PAGEFILE USAGE]"
-        Get-CimInstance Win32_PageFileUsage -ErrorAction SilentlyContinue |
-            Select-Object Name, CurrentUsage, AllocatedBaseSize |
-            Format-Table -AutoSize | Out-String
-
         "`n" + ("=" * 60)
         "  END OF REPORT"
         "=" * 60
     }
 
     $report | Out-File -FilePath $outFile -Encoding UTF8
+
+    Write-HealthSummary $summary
+    Write-Host ""
+    Write-Host "  Overall: $overall" -ForegroundColor $(
+        switch ($overall) { 'OK' { 'Green' } 'WARN' { 'Yellow' } 'FAIL' { 'Red' } })
     Write-Host "  Report saved to: $outFile" -ForegroundColor Cyan
     Write-Host "  Size: $([math]::Round((Get-Item $outFile).Length / 1KB, 1)) KB" -ForegroundColor DarkCyan
 }
 
 function Invoke-SystemHealthCheck {
+    Write-HealthSummary (Get-HealthSummary)
     Get-DiskSpace
     Get-TopProcesses
 }
