@@ -344,6 +344,11 @@ function Show-AdminMenu {
         Write-Host "  [E]  Export Health Report"    -ForegroundColor DarkCyan
         Write-Host "  [0]  Exit to Shell"           -ForegroundColor Red
         Write-Host ("=" * 60) -ForegroundColor DarkGray
+        Write-Host "  Tip: after a task, press " -ForegroundColor DarkGray -NoNewline
+        Write-Host "[X]" -ForegroundColor Red -NoNewline
+        Write-Host " then Enter to exit  -  type " -ForegroundColor DarkGray -NoNewline
+        Write-Host "Show-AdminMenu" -ForegroundColor Cyan -NoNewline
+        Write-Host " to reopen." -ForegroundColor DarkGray
 
         $choice = Read-Host "`n  Select an option"
 

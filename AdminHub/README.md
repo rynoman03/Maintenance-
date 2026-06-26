@@ -36,8 +36,10 @@ administrative tasks — with the option to drop to a normal shell at any time.
 | 0   | Exit to Shell               | —           |
 
 After any task runs, you get a `[Enter] Return to menu / [X] Exit to shell`
-prompt so output stays on screen. Exiting leaves all task functions loaded in
-the session; type `Show-AdminMenu` to reopen the menu.
+prompt so output stays on screen — press `X` then Enter to drop to the shell.
+Exiting leaves all task functions loaded in the session; type `Show-AdminMenu`
+at any time to reopen the menu. The menu also shows this tip on screen each time
+it is drawn.
 
 ## Files
 
